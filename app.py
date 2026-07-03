@@ -1,0 +1,237 @@
+import streamlit as st
+from text_gen import generate_tagline, generate_blog_intro, generate_social_posts
+from image_gen import generate_hero_image
+from video_gen import generate_promo_video
+from critique import critique_and_regenerate
+from voiceover import generate_voiceover
+from adapt import adapt_for_channel, CHANNELS
+
+st.set_page_config(page_title="AI Content Engine Pro", layout="wide")
+st.title("🎯 AI Content Engine Pro")
+
+with st.sidebar:
+    st.header("Product Brief")
+    product  = st.text_input("Product name",     placeholder="e.g. Sparkling Mango Juice")
+    audience = st.text_input("Target audience",  placeholder="e.g. health-conscious millennials")
+    tone     = st.text_input("Brand tone",       placeholder="e.g. playful / premium / eco")
+    clicked  = st.button("Generate Campaign", use_container_width=True)
+
+left, right = st.columns([1.2, 1])
+
+if clicked:
+    product  = product.strip()
+    audience = audience.strip()
+    tone     = tone.strip()
+    if not (product and audience and tone):
+        st.warning("Please fill in all three fields.")
+        st.stop()
+
+    # ── CALL 1: Tagline ─────────────────────────────────────────────────
+    with st.spinner("Generating tagline..."):
+        try:
+            tagline = generate_tagline(product, audience, tone)
+        except Exception as e:
+            left.error(f"Tagline failed: {e}")
+            st.stop()
+
+    # ── CALL 2: Blog Intro ──────────────────────────────────────────────
+    with st.spinner("Writing blog introduction..."):
+        try:
+            blog_text = generate_blog_intro(product, audience, tone, tagline)
+        except Exception as e:
+            blog_text = None
+            left.error(f"Blog intro failed: {e}")
+
+    # ── CALL 3: Social Posts ────────────────────────────────────────────
+    with st.spinner("Creating social posts..."):
+        try:
+            social_json = generate_social_posts(product, tone)
+        except Exception as e:
+            social_json = None
+            left.error(f"Social posts failed: {e}")
+
+    # ── CALL 4: Hero Image ──────────────────────────────────────────────
+    with st.spinner("Generating hero image..."):
+        try:
+            hero_image_bytes = generate_hero_image(product, tagline, tone)
+        except Exception as e:
+            hero_image_bytes = None
+            right.error(f"Hero image failed: {e}")
+
+    # ── CALL 5: Promo Video (depends on image) ──────────────────────────
+    video_bytes = None
+    if hero_image_bytes:
+        with st.spinner("Rendering promo video (may take 1–2 min)..."):
+            try:
+                video_bytes = generate_promo_video(hero_image_bytes)
+            except Exception as e:
+                right.error(f"Video generation failed: {e}")
+
+    # ── ADDITION 1: Self-Critique Loop ──────────────────────────────────
+    verdict      = None
+    retries_used = 0
+    if blog_text and social_json:
+        with st.spinner("Running self-critique loop..."):
+            try:
+                tagline, blog_text, social_json, verdict, retries_used = (
+                    critique_and_regenerate(
+                        product, audience, tone,
+                        tagline, blog_text, social_json,
+                    )
+                )
+            except Exception as e:
+                st.warning(f"Critique loop error (output kept as-is): {e}")
+
+    # ── ADDITION 2: Voiceover ───────────────────────────────────────────
+    audio_bytes  = None
+    vo_script    = None
+    if blog_text:
+        with st.spinner("Generating voiceover..."):
+            try:
+                audio_bytes, vo_script = generate_voiceover(blog_text)
+            except Exception as e:
+                st.warning(f"Voiceover failed: {e}")
+
+    # ════════════════════════════════════════════════════════════════════
+    # RENDER — Left column: text assets
+    # ════════════════════════════════════════════════════════════════════
+    with left:
+        if tagline:
+            st.markdown("### Campaign Tagline")
+            st.info(f"**{tagline}**")
+            st.caption("Technique: Few-shot prompting")
+
+        if blog_text:
+            st.markdown("### Blog Introduction")
+            st.markdown(
+                f'<div style="background:#f9f9f9;padding:1rem;border-radius:8px">'
+                f'{blog_text}</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption("Technique: Role-based prompting")
+
+        if social_json:
+            st.markdown("### Social Media Posts")
+            st.caption("Technique: Structured output (JSON)")
+            st.markdown("**Twitter / X**")
+            st.text_area("", social_json.get("twitter", ""),    height=80,  key="tw", disabled=True)
+            st.caption(f"{len(social_json.get('twitter',''))} / 280 chars")
+            st.markdown("**Instagram**")
+            st.text_area("", social_json.get("instagram", ""),  height=120, key="ig", disabled=True)
+            st.caption(f"{len(social_json.get('instagram',''))} / 2200 chars")
+            st.markdown("**LinkedIn**")
+            st.text_area("", social_json.get("linkedin", ""),   height=100, key="li", disabled=True)
+            st.caption(f"{len(social_json.get('linkedin',''))} / 700 chars")
+
+    # ════════════════════════════════════════════════════════════════════
+    # RENDER — Right column: visual assets
+    # ════════════════════════════════════════════════════════════════════
+    with right:
+        if hero_image_bytes:
+            st.markdown("### Hero Image")
+            st.image(hero_image_bytes, use_container_width=True)
+            st.caption("Technique: Image prompt formula (FLUX.2)")
+
+        if video_bytes:
+            st.markdown("### Promotional Video")
+            st.video(video_bytes)
+            st.caption("Technique: Image-to-video (Wan 2.6)")
+
+    # ════════════════════════════════════════════════════════════════════
+    # ADDITION 1 PANEL — Critique Verdict
+    # ════════════════════════════════════════════════════════════════════
+    st.divider()
+    st.markdown("## 🔍 Self-Critique Verdict")
+    st.caption("Technique: LLM-as-critic with auto-regeneration (max 2 retries)")
+
+    if verdict:
+        if retries_used > 0:
+            st.warning(f"⚠️ {retries_used} regeneration round(s) performed before passing.")
+        else:
+            st.success("✅ All assets passed critique on first attempt.")
+
+        col1, col2, col3 = st.columns(3)
+        for col, key, label in [
+            (col1, "tagline", "Tagline"),
+            (col2, "blog",    "Blog Intro"),
+            (col3, "social",  "Social Posts"),
+        ]:
+            grade = verdict.get(key, {})
+            passed = grade.get("pass", True)
+            issue  = grade.get("issue")
+            with col:
+                if passed:
+                    st.success(f"**{label}** ✅ Pass")
+                else:
+                    st.error(f"**{label}** ❌ Fail")
+                    if issue:
+                        st.caption(f"Issue: {issue}")
+    else:
+        st.info("Critique could not run (missing blog or social assets).")
+
+    # ════════════════════════════════════════════════════════════════════
+    # ADDITION 2 PANEL — Voiceover Player
+    # ════════════════════════════════════════════════════════════════════
+    st.divider()
+    st.markdown("## 🎙️ Voiceover")
+    st.caption("Technique: Script adaptation + OpenAI TTS (tts-1)")
+
+    if audio_bytes:
+        st.audio(audio_bytes, format="audio/mp3")
+        if vo_script:
+            with st.expander("View voiceover script"):
+                st.write(vo_script)
+    else:
+        st.info("Voiceover not available (blog intro required).")
+
+    # ════════════════════════════════════════════════════════════════════
+    # ADDITION 3 PANEL — Multi-Channel Adaptation
+    # ════════════════════════════════════════════════════════════════════
+    st.divider()
+    st.markdown("## 📢 Multi-Channel Adaptation")
+    st.caption("Technique: Channel-aware rewriting — text only, visuals unchanged")
+
+    if tagline and blog_text and social_json:
+        channel = st.selectbox("Adapt campaign for:", CHANNELS, key="channel_select")
+        if st.button("Adapt for this channel", key="adapt_btn"):
+            with st.spinner(f"Adapting for {channel}..."):
+                try:
+                    adapted = adapt_for_channel(channel, tagline, blog_text, social_json)
+
+                    a_left, a_right = st.columns([1.2, 1])
+                    with a_left:
+                        st.markdown(f"### Adapted Tagline — *{channel}*")
+                        st.info(f"**{adapted.get('tagline', '')}**")
+
+                        st.markdown(f"### Adapted Blog Intro — *{channel}*")
+                        st.markdown(
+                            f'<div style="background:#f0f4ff;padding:1rem;border-radius:8px">'
+                            f'{adapted.get("blog", "")}</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                        adapted_social = adapted.get("social", {})
+                        if adapted_social:
+                            st.markdown(f"### Adapted Social Posts — *{channel}*")
+                            st.markdown("**Twitter / X**")
+                            st.text_area("", adapted_social.get("twitter", ""),   height=80,  key="atw", disabled=True)
+                            st.caption(f"{len(adapted_social.get('twitter',''))} / 280 chars")
+                            st.markdown("**Instagram**")
+                            st.text_area("", adapted_social.get("instagram", ""), height=120, key="aig", disabled=True)
+                            st.caption(f"{len(adapted_social.get('instagram',''))} / 2200 chars")
+                            st.markdown("**LinkedIn**")
+                            st.text_area("", adapted_social.get("linkedin", ""),  height=100, key="ali", disabled=True)
+                            st.caption(f"{len(adapted_social.get('linkedin',''))} / 700 chars")
+
+                    with a_right:
+                        st.markdown("### Hero Image *(unchanged)*")
+                        if hero_image_bytes:
+                            st.image(hero_image_bytes, use_container_width=True)
+                        st.caption("Image and video assets are not regenerated for channel adaptations.")
+                except Exception as e:
+                    st.error(f"Channel adaptation failed: {e}")
+    else:
+        st.info("Generate a campaign first to enable channel adaptation.")
+
+else:
+    left.markdown("*Fill in the sidebar and click **Generate Campaign** to create your assets.*")
