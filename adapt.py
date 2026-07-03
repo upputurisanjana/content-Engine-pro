@@ -10,26 +10,11 @@ Supported channels:
   - Parents Facebook
 """
 
-import re
 import json
 from config import openrouter_client, TEXT_MODEL
+from utils import get_content, clean, strip_fences
 
 CHANNELS = ["B2B LinkedIn", "Gen-Z TikTok", "Parents Facebook"]
-
-
-def _get_content(resp) -> str:
-    msg = resp.choices[0].message
-    text = msg.content
-    if not text:
-        text = getattr(msg, "reasoning_content", None)
-    if not text:
-        raise ValueError("Model returned an empty response.")
-    return text
-
-
-def _clean(text: str) -> str:
-    """Strip DeepSeek <think>...</think> reasoning blocks if present."""
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
 ADAPT_SYSTEM = """
@@ -93,13 +78,10 @@ def adapt_for_channel(
                 ],
                 max_tokens=1200,
             )
-            raw = _clean(_get_content(resp))
-            # Strip markdown fences if model adds them
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-                raw = raw.strip()
+            # WHY strip_fences then clean: models sometimes add ```json fences
+            # despite explicit instructions not to; clean() removes DeepSeek
+            # <think>...</think> reasoning blocks that corrupt JSON parsing.
+            raw  = strip_fences(clean(get_content(resp)))
             data = json.loads(raw)
             # Enforce character limits on adapted social posts
             if "social" in data:

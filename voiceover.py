@@ -6,23 +6,8 @@ Step 1: SCRIPT_ADAPTER rewrites the blog intro as a TTS-ready voiceover script
 Step 2: OpenAI TTS (tts-1 via OpenRouter) converts the script to mp3 bytes.
 """
 
-import re
 from config import openrouter_client, tts_client, TEXT_MODEL, TTS_MODEL
-
-
-def _get_content(resp) -> str:
-    msg = resp.choices[0].message
-    text = msg.content
-    if not text:
-        text = getattr(msg, "reasoning_content", None)
-    if not text:
-        raise ValueError("Model returned an empty response.")
-    return text
-
-
-def _clean(text: str) -> str:
-    """Strip DeepSeek <think>...</think> reasoning blocks if present."""
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+from utils import get_content, clean
 
 
 SCRIPT_ADAPTER = """
@@ -37,7 +22,11 @@ Rewrite this blog intro as a voiceover script.
 def adapt_script(blog_text: str) -> str:
     """
     Convert blog intro prose into a TTS-friendly voiceover script.
-    Returns plain text with pause cues.
+
+    WHY a separate LLM call for script adaptation (not just pipe blog text
+    directly to TTS): TTS sounds unnatural with long sentences and no pause
+    cues. The adapter injects commas and ellipses that map to natural breath
+    cadence in the audio output.
     """
     for attempt in range(2):
         try:
@@ -49,7 +38,7 @@ def adapt_script(blog_text: str) -> str:
                 ],
                 max_tokens=600,
             )
-            return _clean(_get_content(resp))
+            return clean(get_content(resp))
         except Exception as e:
             if attempt == 1:
                 raise RuntimeError(f"Script adaptation failed: {e}")

@@ -5,25 +5,10 @@ A critic prompt examines tagline, blog, and social posts against the brief.
 If any fail, auto-regenerate with feedback injected. Max 2 retries.
 """
 
-import re
 import json
 from config import openrouter_client, TEXT_MODEL
 from text_gen import generate_tagline, generate_blog_intro, generate_social_posts
-
-
-def _get_content(resp) -> str:
-    msg = resp.choices[0].message
-    text = msg.content
-    if not text:
-        text = getattr(msg, "reasoning_content", None)
-    if not text:
-        raise ValueError("Model returned an empty response.")
-    return text
-
-
-def _clean(text: str) -> str:
-    """Strip DeepSeek <think>...</think> reasoning blocks if present."""
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+from utils import get_content, clean, strip_fences
 
 
 CRITIC_SYSTEM = """
@@ -69,17 +54,12 @@ def _run_critic(
             ],
             max_tokens=400,
         )
-        raw = _clean(_get_content(resp))
-        # Strip markdown fences if present
-        if raw.startswith("```"):
-            parts = raw.split("```")
-            raw = parts[1] if len(parts) > 1 else raw
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
+        # WHY strip_fences then clean: some models wrap JSON in ```json fences
+        # even when instructed not to; clean() removes DeepSeek think blocks.
+        raw = strip_fences(clean(get_content(resp)))
         return json.loads(raw)
     except Exception:
-        # Critic failure is non-fatal — treat as all-pass
+        # Critic failure is non-fatal — treat as all-pass so output is never blocked.
         return {
             "tagline": {"pass": True, "issue": None},
             "blog":    {"pass": True, "issue": None},
