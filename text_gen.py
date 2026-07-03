@@ -1,38 +1,29 @@
-import re
+"""
+text_gen.py — Text asset generation (tagline, blog intro, social posts).
+
+WHY three separate functions instead of one big generate() call:
+  Each asset has a different prompting technique and failure mode. Keeping them
+  separate means the critique loop can regenerate just the failing asset without
+  re-running the others, saving tokens and latency.
+"""
+
+import time
 import json
 from config import openrouter_client, TEXT_MODEL
+from utils import get_content, clean, strip_fences, log_llm_call
 
 
-def _get_content(resp) -> str:
-    """
-    Safely extract text from a chat completion response.
-    DeepSeek-R1 sometimes returns content=None and puts the actual
-    answer in message.reasoning_content instead.
-    """
-    msg = resp.choices[0].message
-    text = msg.content
-    if not text:
-        # fallback: reasoning_content (DeepSeek-R1 via OpenRouter)
-        text = getattr(msg, "reasoning_content", None)
-    if not text:
-        raise ValueError("Model returned an empty response (both content and reasoning_content are None).")
-    return text
-
-
-def _clean(text: str) -> str:
-    """Strip DeepSeek <think>...</think> reasoning blocks if present."""
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-
-
-# ─────────────────────────────────────────────
-# Prompt 1: Campaign Tagline (Few-shot)
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt 1: Campaign Tagline — Few-shot prompting
+# ─────────────────────────────────────────────────────────────────────────────
 
 TAGLINE_SYSTEM = """
 You are a creative director. Generate ONE campaign tagline.
 Match the brand tone exactly. Max 10 words. No hashtags.
 """
 
+# WHY tone-bucketed examples: few-shot examples that match the requested tone
+# prime the model to stay in that style. Generic examples produce generic output.
 FEW_SHOT_EXAMPLES = {
     "playful": [
         {"product": "fizzy lemonade", "tagline": "Squeeze the day, one sip at a time."},
@@ -62,7 +53,10 @@ def generate_tagline(
 ) -> str:
     """
     Generate a single campaign tagline using few-shot prompting.
-    Pass `feedback` to inject critic notes on a retry.
+
+    WHY accept `feedback`: the critique loop calls this function again with the
+    critic's issue injected — one function handles both first-pass and retry
+    without duplicating prompt logic.
     """
     examples = FEW_SHOT_EXAMPLES.get(tone.lower(), DEFAULT_EXAMPLES)
     shots = "\n".join(
@@ -79,6 +73,7 @@ def generate_tagline(
     user_prompt += "Tagline:"
 
     for attempt in range(2):
+        t0 = time.time()
         try:
             resp = openrouter_client.chat.completions.create(
                 model=TEXT_MODEL,
@@ -88,15 +83,32 @@ def generate_tagline(
                 ],
                 max_tokens=200,
             )
-            return _clean(_get_content(resp)).strip('"')
+            latency = (time.time() - t0) * 1000
+            # WHY log usage even on success: token counts let us estimate monthly
+            # cost before it becomes a surprise on the bill.
+            usage = resp.usage or type("u", (), {"prompt_tokens": 0, "completion_tokens": 0})()
+            log_llm_call(
+                model=TEXT_MODEL,
+                operation="tagline",
+                input_tokens=getattr(usage, "prompt_tokens", 0),
+                output_tokens=getattr(usage, "completion_tokens", 0),
+                latency_ms=latency,
+            )
+            return clean(get_content(resp)).strip('"')
         except Exception as e:
+            log_llm_call(
+                model=TEXT_MODEL, operation="tagline",
+                input_tokens=0, output_tokens=0,
+                latency_ms=(time.time() - t0) * 1000,
+                status="error", error=str(e),
+            )
             if attempt == 1:
                 raise RuntimeError(f"Tagline generation failed: {e}")
 
 
-# ─────────────────────────────────────────────
-# Prompt 2: Blog Introduction (Role-based)
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt 2: Blog Introduction — Role-based prompting
+# ─────────────────────────────────────────────────────────────────────────────
 
 def generate_blog_intro(
     product: str,
@@ -106,8 +118,11 @@ def generate_blog_intro(
     feedback: str | None = None,
 ) -> str:
     """
-    Generate a 200-word blog introduction using role-based prompting.
-    Pass `feedback` to inject critic notes on a retry.
+    Generate a ~200-word blog introduction using role-based prompting.
+
+    WHY role-based for blog (vs few-shot for tagline): blog intros need sustained
+    persona consistency across 200 words. A system-level role ("you are a content
+    strategist writing for X") maintains that better than in-context examples.
     """
     system = (
         f"You are a content strategist writing for {audience}. "
@@ -121,6 +136,7 @@ def generate_blog_intro(
         user_msg += f"\n\nCritic feedback to address: {feedback}"
 
     for attempt in range(2):
+        t0 = time.time()
         try:
             resp = openrouter_client.chat.completions.create(
                 model=TEXT_MODEL,
@@ -130,16 +146,33 @@ def generate_blog_intro(
                 ],
                 max_tokens=500,
             )
-            return _clean(_get_content(resp))
+            latency = (time.time() - t0) * 1000
+            usage = resp.usage or type("u", (), {"prompt_tokens": 0, "completion_tokens": 0})()
+            log_llm_call(
+                model=TEXT_MODEL, operation="blog_intro",
+                input_tokens=getattr(usage, "prompt_tokens", 0),
+                output_tokens=getattr(usage, "completion_tokens", 0),
+                latency_ms=latency,
+            )
+            return clean(get_content(resp))
         except Exception as e:
+            log_llm_call(
+                model=TEXT_MODEL, operation="blog_intro",
+                input_tokens=0, output_tokens=0,
+                latency_ms=(time.time() - t0) * 1000,
+                status="error", error=str(e),
+            )
             if attempt == 1:
                 raise RuntimeError(f"Blog intro generation failed: {e}")
 
 
-# ─────────────────────────────────────────────
-# Prompt 3: Social Media Posts (Structured JSON)
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt 3: Social Posts — Structured JSON output
+# ─────────────────────────────────────────────────────────────────────────────
 
+# WHY JSON output for social posts: we need to enforce per-platform character
+# limits programmatically. A prose response would require fragile parsing.
+# Asking for JSON upfront gives us a reliable dict to truncate against limits.
 SOCIAL_SYSTEM = """
 Generate social posts for {product}.
 Return ONLY JSON:
@@ -161,7 +194,10 @@ def generate_social_posts(
 ) -> dict:
     """
     Generate platform-specific social posts as a JSON dict.
-    Pass `feedback` to inject critic notes on a retry.
+
+    WHY hard-enforce char limits after parsing (not just in the prompt):
+      LLMs don't count characters reliably. The prompt sets intent; the
+      truncation here is the safety net that prevents Twitter over-length posts.
     """
     system = SOCIAL_SYSTEM.format(product=product, tone=tone)
     user_msg = "Generate the social posts now."
@@ -169,6 +205,7 @@ def generate_social_posts(
         user_msg += f"\n\nCritic feedback to address: {feedback}"
 
     for attempt in range(2):
+        t0 = time.time()
         try:
             resp = openrouter_client.chat.completions.create(
                 model=TEXT_MODEL,
@@ -178,22 +215,36 @@ def generate_social_posts(
                 ],
                 max_tokens=800,
             )
-            raw = _clean(_get_content(resp))
-            # Strip markdown fences if model adds them
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-                raw = raw.strip()
+            latency = (time.time() - t0) * 1000
+            usage = resp.usage or type("u", (), {"prompt_tokens": 0, "completion_tokens": 0})()
+            log_llm_call(
+                model=TEXT_MODEL, operation="social_posts",
+                input_tokens=getattr(usage, "prompt_tokens", 0),
+                output_tokens=getattr(usage, "completion_tokens", 0),
+                latency_ms=latency,
+            )
+            raw  = strip_fences(clean(get_content(resp)))
             data = json.loads(raw)
-            # Hard-enforce character limits
+            # Hard-enforce character limits — LLMs can't count chars reliably
             for platform, limit in CHAR_LIMITS.items():
                 if platform in data:
                     data[platform] = data[platform][:limit]
             return data
         except json.JSONDecodeError as e:
+            log_llm_call(
+                model=TEXT_MODEL, operation="social_posts",
+                input_tokens=0, output_tokens=0,
+                latency_ms=(time.time() - t0) * 1000,
+                status="error", error=str(e),
+            )
             if attempt == 1:
                 raise RuntimeError(f"Social post JSON parse failed: {e}")
         except Exception as e:
+            log_llm_call(
+                model=TEXT_MODEL, operation="social_posts",
+                input_tokens=0, output_tokens=0,
+                latency_ms=(time.time() - t0) * 1000,
+                status="error", error=str(e),
+            )
             if attempt == 1:
                 raise RuntimeError(f"Social post generation failed: {e}")
