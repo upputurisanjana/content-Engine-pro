@@ -10,7 +10,7 @@ IMAGE_API_KEY      = os.getenv("IMAGE_API_KEY", OPENROUTER_API_KEY)
 OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY")          # needed only for TTS
 
 # ── Models ──────────────────────────────────────────────────────────────
-TEXT_MODEL  = "deepseek/deepseek-r1"
+TEXT_MODEL  = "openai/gpt-4o-mini"
 IMAGE_MODEL = "bytedance-seed/seedream-4.5"
 VIDEO_MODEL = "alibaba/wan-2.6"          # cheapest image-to-video on OpenRouter
 TTS_MODEL   = "tts-1"                    # OpenAI TTS — called directly (not via OpenRouter)
