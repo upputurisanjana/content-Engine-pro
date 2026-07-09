@@ -52,7 +52,7 @@ def _run_critic(
                 {"role": "system", "content": CRITIC_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=400,
+            max_tokens=200,
         )
         # WHY strip_fences then clean: some models wrap JSON in ```json fences
         # even when instructed not to; clean() removes DeepSeek think blocks.

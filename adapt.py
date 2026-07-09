@@ -76,7 +76,7 @@ def adapt_for_channel(
                     {"role": "system", "content": system},
                     {"role": "user",   "content": user_msg},
                 ],
-                max_tokens=1200,
+                max_tokens=800,
             )
             # WHY strip_fences then clean: models sometimes add ```json fences
             # despite explicit instructions not to; clean() removes DeepSeek

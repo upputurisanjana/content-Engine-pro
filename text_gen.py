@@ -81,7 +81,7 @@ def generate_tagline(
                     {"role": "system", "content": TAGLINE_SYSTEM},
                     {"role": "user",   "content": user_prompt},
                 ],
-                max_tokens=200,
+                max_tokens=50,
             )
             latency = (time.time() - t0) * 1000
             # WHY log usage even on success: token counts let us estimate monthly
@@ -144,7 +144,7 @@ def generate_blog_intro(
                     {"role": "system", "content": system},
                     {"role": "user",   "content": user_msg},
                 ],
-                max_tokens=500,
+                max_tokens=350,
             )
             latency = (time.time() - t0) * 1000
             usage = resp.usage or type("u", (), {"prompt_tokens": 0, "completion_tokens": 0})()
@@ -213,7 +213,7 @@ def generate_social_posts(
                     {"role": "system", "content": system},
                     {"role": "user",   "content": user_msg},
                 ],
-                max_tokens=800,
+                max_tokens=400,
             )
             latency = (time.time() - t0) * 1000
             usage = resp.usage or type("u", (), {"prompt_tokens": 0, "completion_tokens": 0})()

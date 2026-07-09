@@ -36,7 +36,7 @@ def adapt_script(blog_text: str) -> str:
                     {"role": "system", "content": SCRIPT_ADAPTER},
                     {"role": "user",   "content": blog_text},
                 ],
-                max_tokens=600,
+                max_tokens=350,
             )
             return clean(get_content(resp))
         except Exception as e:
